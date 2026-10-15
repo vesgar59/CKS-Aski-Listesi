@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.5'
+APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.6'
 COLUMNS = ['İşletme Adı','T.C. / Vergi No','İl','İlçe','Mahalle/Köy','Ada No','Parsel No',
            "ÇKS'ye Beyan Edilen Ürün","ÇKS'ye Beyan Edilen Ürün Grubu",
            "ÇKS'ye Beyan Edilen Ürün Alanı (da)", 'Tespit Edilen Ürün Grubu',
@@ -267,38 +267,115 @@ class Application(tk.Tk):
             elif sys.platform=='darwin':subprocess.Popen(['open',path])
             else:subprocess.Popen(['xdg-open',path])
 
+    @staticmethod
+    def send_pdf_to_windows_printer(path):
+        """PDF sayfalarını Windows GDI üzerinden varsayılan yazıcıya aktar.
+
+        Windows'un PDF dosyası için 'print' dosya ilişkilendirmesine dayanmaz.
+        PDF çok sayfalıysa sayfalar bellekte tek tek işlenir.
+        """
+        import fitz  # PyMuPDF
+        import win32print
+        import win32ui
+        import win32con
+        from PIL import Image, ImageWin
+
+        printer_name = win32print.GetDefaultPrinter()
+        if not printer_name:
+            raise RuntimeError('Windows üzerinde varsayılan yazıcı ayarlanmamış.')
+
+        printer_handle = win32print.OpenPrinter(printer_name)
+        devmode = None
+        try:
+            details = win32print.GetPrinter(printer_handle, 2)
+            devmode = details.get('pDevMode')
+            if devmode is not None:
+                devmode.Orientation = win32con.DMORIENT_LANDSCAPE
+                devmode.Fields |= win32con.DM_ORIENTATION
+        finally:
+            win32print.ClosePrinter(printer_handle)
+
+        dc = win32ui.CreateDC()
+        doc_started = False
+        try:
+            # Yazıcı sürücüsüne A4 yatay isteğini ve seçilen çıktı yönünü ilet.
+            if devmode is not None:
+                dc.CreateDC('WINSPOOL', printer_name, None, devmode)
+            else:
+                dc.CreatePrinterDC(printer_name)
+            printable_w = dc.GetDeviceCaps(win32con.HORZRES)
+            printable_h = dc.GetDeviceCaps(win32con.VERTRES)
+            if printable_w <= 0 or printable_h <= 0:
+                raise RuntimeError('Varsayılan yazıcının baskı ölçüleri alınamadı.')
+            # Yazıcıdaki donanımsal marjlar HORZRES/VERTRES ile korunur.
+            with fitz.open(path) as pdf:
+                dc.StartDoc('ÇKS Askı Listesi')
+                doc_started = True
+                for page in pdf:
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), colorspace=fitz.csRGB, alpha=False)
+                    page_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
+                    del pix
+                    scale = min(printable_w / page_image.width, printable_h / page_image.height)
+                    width = max(1, int(page_image.width * scale))
+                    height = max(1, int(page_image.height * scale))
+                    x = (printable_w - width) // 2
+                    y = (printable_h - height) // 2
+                    dc.StartPage()
+                    try:
+                        ImageWin.Dib(page_image).draw(dc.GetHandleOutput(), (x, y, x + width, y + height))
+                    finally:
+                        dc.EndPage()
+                dc.EndDoc()
+                doc_started = False
+            return printer_name
+        except Exception:
+            if doc_started:
+                try:
+                    dc.AbortDoc()
+                except Exception:
+                    pass
+            raise
+        finally:
+            dc.DeleteDC()
+
     def direct_print(self):
-        """Kaydetme penceresi olmadan PDF'yi varsayılan Windows yazıcısına gönder."""
+        """PDF işleyicisine gerek kalmadan Windows yazıcısına doğrudan yazdır."""
         if sys.platform != 'win32':
             messagebox.showerror('Yazdırma', 'Doğrudan yazdırma yalnızca Windows üzerinde desteklenir.')
             return
-        where,args=self.selection()
+        where, args = self.selection()
         if where is None:
-            messagebox.showwarning('Durum seçimi','En az bir Beyan/Tespit Durumu seçmelisiniz.')
+            messagebox.showwarning('Durum seçimi', 'En az bir Beyan/Tespit Durumu seçmelisiniz.')
             return
-        count=self.db.execute('SELECT COUNT(*) FROM records WHERE '+where,args).fetchone()[0]
+        count = self.db.execute('SELECT COUNT(*) FROM records WHERE ' + where, args).fetchone()[0]
         if not count:
-            messagebox.showwarning('Kayıt yok','Seçili filtrelere uygun kayıt bulunamadı.')
+            messagebox.showwarning('Kayıt yok', 'Seçili filtrelere uygun kayıt bulunamadı.')
             return
         if not messagebox.askyesno('Doğrudan yazdır',
                 f'{count:,} kayıt A4 yatay PDF düzeninde varsayılan yazıcıya gönderilecek.\n\nDevam edilsin mi?'):
             return
-        # PDF işleyicisi dosyayı asenkron açabileceğinden geçici klasörü hemen silmeyiz.
-        folder=tempfile.mkdtemp(prefix='cks_yazdir_')
-        path=os.path.join(folder,'CKS_Aski_Listesi_Yazdir.pdf')
+        folder = tempfile.mkdtemp(prefix='cks_yazdir_')
+        path = os.path.join(folder, 'CKS_Aski_Listesi_Yazdir.pdf')
         try:
-            self.export_pdf(path,where,args,count)
-            os.startfile(path, 'print')
+            self.export_pdf(path, where, args, count)
+            printer = self.send_pdf_to_windows_printer(path)
         except Exception as exc:
             messagebox.showerror('Yazdırma hatası',
-                'PDF yazdırma komutu çalıştırılamadı. Windows varsayılan PDF uygulamanız '
-                '"Yazdır" komutunu desteklemiyor olabilir.\n\n'
-                f'Hata: {exc}\n\nAlternatif: PDF Kaydet seçeneğini kullanıp PDF\'yi açarak yazdırın.')
+                'PDF hazırlandı ancak yazıcıya gönderilemedi.\n\n'
+                f'Açıklama: {exc}\n\n'
+                'Varsayılan yazıcıyı ve sürücüsünü kontrol edin. '
+                'Alternatif olarak PDF Kaydet seçeneğini kullanabilirsiniz.')
             return
+        finally:
+            # Yazdırma GDI üzerinden senkron tamamlandığından geçici PDF silinebilir.
+            try:
+                import shutil
+                shutil.rmtree(folder)
+            except OSError:
+                pass
         messagebox.showinfo('Yazdırma',
-            f'{count:,} kayıt için yazdırma komutu varsayılan PDF uygulamasına iletildi.\n'
-            'Yazıcı kuyruğuna alındığını Windows üzerinden kontrol edin.\n\n'
-            'Not: PDF uygulaması bir yazdırma penceresi açabilir.')
+            f'Yazdırma görevi Windows yazıcı sistemine iletildi.\nYazıcı: {printer}\n'
+            'Kağıt çıkışını yazıcının kuyruğundan kontrol edin.')
 
     def export_pdf(self,path,where,args,count):
         w,h=landscape(A4)
