@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.6'
+APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.8'
 COLUMNS = ['İşletme Adı','T.C. / Vergi No','İl','İlçe','Mahalle/Köy','Ada No','Parsel No',
            "ÇKS'ye Beyan Edilen Ürün","ÇKS'ye Beyan Edilen Ürün Grubu",
            "ÇKS'ye Beyan Edilen Ürün Alanı (da)", 'Tespit Edilen Ürün Grubu',
@@ -336,7 +336,17 @@ class Application(tk.Tk):
                     pass
             raise
         finally:
-            dc.DeleteDC()
+            # Bazi Windows yazici suruculeri, EndDoc sonrasinda GDI aygit
+            # baglamini zaten serbest birakir. Bu durumda pywin32 DeleteDC
+            # WinError 6 veya 'DeleteDC failed' verebilir. Belge EndDoc ile
+            # yazici kuyruguna teslim edildiyse temizleme hatasi baski hatasi
+            # olarak raporlanmamalidir. Asil StartDoc/StartPage/EndDoc
+            # hatalari yukaridaki except ile kullaniciya iletilir.
+            try:
+                dc.DeleteDC()
+            except Exception as cleanup_exc:
+                import logging
+                logging.warning('Yazici GDI temizleme uyarisi (DeleteDC): %s', cleanup_exc)
 
     def direct_print(self):
         """PDF işleyicisine gerek kalmadan Windows yazıcısına doğrudan yazdır."""
