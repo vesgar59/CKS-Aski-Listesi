@@ -1,0 +1,38 @@
+
+name: Windows Portable EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Kaynak kodlarini al
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Kutuphaneleri kur
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+          python -m pip install pyinstaller
+
+      - name: Portable EXE olustur
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name CKS_Aski_Listesi cks_aski.py
+
+      - name: EXE dosyasini indirilebilir yap
+        uses: actions/upload-artifact@v4
+        with:
+          name: CKS_Aski_Listesi_Windows_Portable
+          path: dist/CKS_Aski_Listesi.exe
+          if-no-files-found: error
