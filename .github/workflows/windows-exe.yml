@@ -1,4 +1,4 @@
-name: Windows Kurumsal Portable (V1.8)
+name: Windows Kurumsal Portable (V1.9)
 
 on:
   workflow_dispatch:
@@ -74,7 +74,7 @@ jobs:
       - name: Portable klasoru indirilebilir yap
         uses: actions/upload-artifact@v4
         with:
-          name: CKS_Aski_Listesi_V1_8_Portable_Klasor
+          name: CKS_Aski_Listesi_V1_9_Portable_Klasor
           path: |
             dist/CKS_Aski_Listesi/**
             dist/CKS_Aski_Listesi_SHA256.txt
