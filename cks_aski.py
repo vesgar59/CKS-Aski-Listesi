@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.9'
+APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.12'
 COLUMNS = ['İşletme Adı','T.C. / Vergi No','İl','İlçe','Mahalle/Köy','Ada No','Parsel No',
            "ÇKS'ye Beyan Edilen Ürün","ÇKS'ye Beyan Edilen Ürün Grubu",
            "ÇKS'ye Beyan Edilen Ürün Alanı (da)", 'Tespit Edilen Ürün Grubu',
@@ -100,11 +100,33 @@ class Application(tk.Tk):
         theme.configure('Title.TLabel',font=('Segoe UI',17,'bold'))
         theme.configure('Sub.TLabel',font=('Segoe UI',10),foreground='#475569')
         outer=ttk.Frame(self,padding=18);outer.pack(fill='both',expand=True)
+        # Reklam altta ilk ayrılan alan olur; dinamik filtreler bu alanı itemez.
+        # Sponsorlu tanıtım yalnızca uygulama arayüzünde görünür; PDF rapora eklenmez.
+        advert=tk.Frame(outer,bg='#102b48',padx=14,pady=9,cursor='hand2')
+        advert.pack(side='bottom',fill='x',pady=(8,0))
+        left=tk.Frame(advert,bg='#102b48',cursor='hand2')
+        left.pack(side='left',fill='x',expand=True)
+        brand=tk.Label(left,text='▶ HaberEngine  |  Profesyonel Haber Yayıncılık Platformu',
+                       font=('Segoe UI',10,'bold'),fg='white',bg='#102b48',anchor='w',cursor='hand2')
+        brand.pack(anchor='w')
+        desc=tk.Label(left,text='Haber botu • Ajans/RSS havuzu • Modern haber sitesi yönetimi',
+                      font=('Segoe UI',9),fg='#c7d9ed',bg='#102b48',anchor='w',cursor='hand2')
+        desc.pack(anchor='w',pady=(2,0))
+        visit=tk.Label(advert,text='Siteyi İncele  ↗',font=('Segoe UI',10,'bold'),
+                       fg='#7ee0f0',bg='#102b48',cursor='hand2')
+        visit.pack(side='right',padx=(12,0))
+        for widget in (advert,left,brand,desc,visit):
+            widget.bind('<Button-1>',lambda event:webbrowser.open('https://haberengine.site/'))
+
         ttk.Label(outer,text='ÇKS BEYAN KONTROL ASKİ LİSTESİ',style='Title.TLabel').pack(anchor='w')
         ttk.Label(outer,text='Excel → il/ilçe/köy ve durum seçimi → A4 yatay PDF / yazdırma',style='Sub.TLabel').pack(anchor='w',pady=(2,14))
         head=ttk.Frame(outer);head.pack(fill='x')
         self.load_btn=ttk.Button(head,text='Excel Dosyası Yükle (.xlsx)',command=self.choose);self.load_btn.pack(side='left')
         ttk.Label(head,textvariable=self.filename).pack(side='left',padx=15)
+        ttk.Label(outer, text="CBS Biriminden gelen Excel dosyasında 'Rapor' sayfasını ilk sıraya alarak yükleyiniz.",
+                  foreground='#9a5700', font=('Segoe UI', 9, 'bold'), wraplength=1080).pack(anchor='w', pady=(7, 1))
+        ttk.Label(outer, text='Windows/antivirüs uyarısı çıkarsa korumayı kapatmayın; kurum bilgi işlem birimine danışın.',
+                  foreground='#475569', font=('Segoe UI', 9), wraplength=1080).pack(anchor='w', pady=(0, 4))
         ttk.Label(outer,textvariable=self.message,wraplength=1080).pack(anchor='w',pady=12)
         flt=ttk.LabelFrame(outer,text='Rapor filtreleri',padding=12);flt.pack(fill='x',pady=4)
         ttk.Label(flt,text='İl').grid(row=0,column=0,sticky='w')
@@ -137,22 +159,6 @@ class Application(tk.Tk):
         self.tree.pack(side='left',fill='both',expand=True)
         scr=ttk.Scrollbar(tbl,orient='vertical',command=self.tree.yview);scr.pack(side='right',fill='y');self.tree.configure(yscrollcommand=scr.set)
         ttk.Label(outer,text='Önizleme ilk 200 kayıtla sınırlıdır. PDF oluşturulurken seçime uyan bütün kayıtlar alınır.',style='Sub.TLabel').pack(anchor='w',pady=(7,0))
-        # Sponsorlu tanıtım yalnızca uygulama arayüzünde görünür; PDF rapora eklenmez.
-        advert=tk.Frame(outer,bg='#102b48',padx=14,pady=9,cursor='hand2')
-        advert.pack(fill='x',pady=(12,0))
-        left=tk.Frame(advert,bg='#102b48',cursor='hand2')
-        left.pack(side='left',fill='x',expand=True)
-        brand=tk.Label(left,text='▶ HaberEngine  |  Profesyonel Haber Yayıncılık Platformu',
-                       font=('Segoe UI',10,'bold'),fg='white',bg='#102b48',anchor='w',cursor='hand2')
-        brand.pack(anchor='w')
-        desc=tk.Label(left,text='Haber botu • Ajans/RSS havuzu • Modern haber sitesi yönetimi',
-                      font=('Segoe UI',9),fg='#c7d9ed',bg='#102b48',anchor='w',cursor='hand2')
-        desc.pack(anchor='w',pady=(2,0))
-        visit=tk.Label(advert,text='Siteyi İncele  ↗',font=('Segoe UI',10,'bold'),
-                       fg='#7ee0f0',bg='#102b48',cursor='hand2')
-        visit.pack(side='right',padx=(12,0))
-        for widget in (advert,left,brand,desc,visit):
-            widget.bind('<Button-1>',lambda event:webbrowser.open('https://haberengine.site/'))
 
 
     def choose(self):
@@ -163,32 +169,82 @@ class Application(tk.Tk):
         threading.Thread(target=self.import_excel,args=(path,),daemon=True).start()
 
     def import_excel(self,path):
-        conn=None
+        """Read every nonempty data row, including records with blank status/name/village.
+
+        Keep diagnostics so a sheet row count is not mistaken for imported records.
+        """
+        conn = None
+        wb = None
         try:
-            conn=sqlite3.connect(self.db_path)
-            conn.execute('DELETE FROM records');conn.commit()
-            wb=load_workbook(path,read_only=True,data_only=True,keep_links=False)
-            total=0;skips=[];batch=[]
+            conn = sqlite3.connect(self.db_path)
+            conn.execute('DELETE FROM records')
+            conn.commit()
+            wb = load_workbook(path, read_only=True, data_only=True, keep_links=False)
+            total = 0
+            report = []
+            batch = []
+            insert_sql = ('INSERT INTO records (' + ','.join(f'c{i}' for i in range(len(COLUMNS)))
+                          + ') VALUES (' + ','.join('?' for _ in COLUMNS) + ')')
             for sheet in wb:
-                header,mapping=find_headers(sheet)
-                if not header or any(x not in mapping for x in REQUIRED):
-                    skips.append(sheet.title+': uygun veri başlığı bulunamadı');continue
-                for row in sheet.iter_rows(min_row=header+1,values_only=True):
-                    vals=[sval(row[mapping[k]]) if k in mapping and mapping[k]<len(row) else '' for k in COLUMNS]
-                    if not vals[0] or not vals[4] or not vals[12]:continue
+                # Exporters occasionally publish an incorrect worksheet dimension.
+                # reset_dimensions lets openpyxl stream the entire XML, not just the
+                # advertised used range (e.g. an erroneously reported 243k rows).
+                if hasattr(sheet, 'reset_dimensions'):
+                    sheet.reset_dimensions()
+                header, mapping = find_headers(sheet)
+                if header is None or any(k not in mapping for k in REQUIRED):
+                    report.append((sheet.title, 'atlandı: ÇKS veri başlıkları bulunamadı', 0, 0, 0, 0))
+                    continue
+                scanned = blank_rows = missing_status = missing_identity = kept = 0
+                for row in sheet.iter_rows(min_row=header+1, values_only=True):
+                    scanned += 1
+                    vals = [sval(row[mapping[k]]) if k in mapping and mapping[k] < len(row) else ''
+                            for k in COLUMNS]
+                    # Genuine blank lines may occur in the worksheet dimensions.
+                    # Do not discard a record merely because its status, name or
+                    # village is blank. The old version silently dropped these.
+                    if not any(vals):
+                        blank_rows += 1
+                        continue
+                    if not vals[12]: missing_status += 1
+                    if not vals[0] or not vals[4]: missing_identity += 1
                     batch.append(vals)
-                    if len(batch)>=3000:
-                        conn.executemany('INSERT INTO records ('+','.join(f'c{i}' for i in range(len(COLUMNS)))+') VALUES ('+','.join('?' for _ in COLUMNS)+')',batch)
-                        total+=len(batch);batch=[];conn.commit()
-                        if total%30000==0:self.events.put(('progress',f'{total:,} kayıt aktarıldı...'))
-            if batch:
-                conn.executemany('INSERT INTO records ('+','.join(f'c{i}' for i in range(len(COLUMNS)))+') VALUES ('+','.join('?' for _ in COLUMNS)+')',batch);total+=len(batch);conn.commit()
-            wb.close()
-            if total==0:raise ValueError('Parsel verisi bulunamadı. Sayfalar: '+'; '.join(skips))
-            self.events.put(('done',total))
-        except Exception as exc:self.events.put(('error',str(exc)))
+                    kept += 1
+                    if len(batch) >= 3000:
+                        conn.executemany(insert_sql, batch)
+                        total += len(batch)
+                        batch.clear()
+                        conn.commit()
+                        if total % 30000 == 0:
+                            self.events.put(('progress', f'{total:,} kayıt aktarıldı (satır kontrolü sürüyor)...'))
+                if batch:
+                    conn.executemany(insert_sql, batch)
+                    total += len(batch)
+                    batch.clear()
+                    conn.commit()
+                report.append((sheet.title, 'okundu', scanned, kept, blank_rows, missing_status))
+            if total == 0:
+                raise ValueError('ÇKS parsel kaydı bulunamadı. Sayfalar: '
+                                 + '; '.join(f'{r[0]} ({r[1]})' for r in report))
+            # A report is written alongside the original Excel; no personal data.
+            lines = ['ÇKS Askı Listesi - Excel Aktarım Kontrol Raporu',
+                     'Kaynak: ' + os.path.basename(path),
+                     'Aktarılan toplam kayıt: ' + str(total),
+                     'Not: Excel satır sayısına başlık ve boş satırlar da dahildir.', '']
+            for name, state, scanned, kept, blanks, no_status in report:
+                lines.append(f'Sayfa: {name} | {state} | taranan: {scanned} | aktarılan: {kept} | tamamen boş: {blanks} | durum boş: {no_status}')
+            report_path = os.path.join(os.path.dirname(path), 'CKS_Aktarim_Kontrol_Raporu.txt')
+            try:
+                with open(report_path, 'w', encoding='utf-8') as out:
+                    out.write('\n'.join(lines) + '\n')
+            except OSError:
+                report_path = '(Excel klasörüne rapor yazılamadı)'
+            self.events.put(('done', (total, report_path, report)))
+        except Exception as exc:
+            self.events.put(('error', str(exc)))
         finally:
-            if conn:conn.close()
+            if wb is not None: wb.close()
+            if conn is not None: conn.close()
 
     def poll(self):
         try:
@@ -197,7 +253,11 @@ class Application(tk.Tk):
                 if typ=='progress':self.message.set(value)
                 else:
                     self.importing=False;self.load_btn.config(state='normal');self.print_btn.config(state='normal');self.direct_print_btn.config(state='normal')
-                    if typ=='done':self.message.set(f'{value:,} kayıt okundu. Askıya çıkarılacak durumları seçin.');self.update_filters()
+                    if typ=='done':
+                        total, report_path, report = value
+                        self.message.set(f'{total:,} kayıt aktarıldı. Aktarım raporu: {report_path}')
+                        self.update_filters()
+                        messagebox.showinfo('Excel aktarım sonucu', f'{total:,} kayıt aktarıldı.\n\nKontrol raporu:\n{report_path}\n\nDurumu boş kayıtlar da alınmıştır; yalnızca seçilen durumlar askıya çıkacaktır.')
                     if typ=='error':self.message.set('Excel okunamadı: '+value);messagebox.showerror('Excel yükleme hatası',value)
         except queue.Empty:pass
         self.after(200,self.poll)
@@ -210,7 +270,7 @@ class Application(tk.Tk):
         self.status_vars={}
         for i,(val,count) in enumerate(self.db.execute('SELECT c12,COUNT(*) FROM records GROUP BY c12 ORDER BY c12')):
             v=tk.BooleanVar(value=False);self.status_vars[val]=v
-            ttk.Checkbutton(self.status_frame,text=f'{val} ({count:,})',variable=v,command=self.refresh_preview).grid(row=i//3,column=i%3,sticky='w',padx=16,pady=3)
+            ttk.Checkbutton(self.status_frame,text=f'{val or "(Beyan/Tespit Durumu boş)"} ({count:,})',variable=v,command=self.refresh_preview).grid(row=i//3,column=i%3,sticky='w',padx=16,pady=3)
         self.refresh_preview()
 
     def on_province(self,event=None):
