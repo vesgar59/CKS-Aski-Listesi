@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.8'
+APP_TITLE = 'ÇKS Askı Listesi - Masaüstü V1.9'
 COLUMNS = ['İşletme Adı','T.C. / Vergi No','İl','İlçe','Mahalle/Köy','Ada No','Parsel No',
            "ÇKS'ye Beyan Edilen Ürün","ÇKS'ye Beyan Edilen Ürün Grubu",
            "ÇKS'ye Beyan Edilen Ürün Alanı (da)", 'Tespit Edilen Ürün Grubu',
@@ -269,84 +269,83 @@ class Application(tk.Tk):
 
     @staticmethod
     def send_pdf_to_windows_printer(path):
-        """PDF sayfalarını Windows GDI üzerinden varsayılan yazıcıya aktar.
+        """PDF sayfalarını Windows'un varsayılan yazıcısına GDI ile aktarır.
 
-        Windows'un PDF dosyası için 'print' dosya ilişkilendirmesine dayanmaz.
-        PDF çok sayfalıysa sayfalar bellekte tek tek işlenir.
+        PDF ilişkilendirmesi gerekmez. pywin32 CDC nesnesinin desteklemediği
+        CreateDC(...) kullanılmaz; CreatePrinterDC(...) kullanılır.
         """
-        import fitz  # PyMuPDF
+        import fitz
         import win32print
         import win32ui
         import win32con
         from PIL import Image, ImageWin
+        import logging
 
         printer_name = win32print.GetDefaultPrinter()
         if not printer_name:
-            raise RuntimeError('Windows üzerinde varsayılan yazıcı ayarlanmamış.')
-
-        printer_handle = win32print.OpenPrinter(printer_name)
-        devmode = None
-        try:
-            details = win32print.GetPrinter(printer_handle, 2)
-            devmode = details.get('pDevMode')
-            if devmode is not None:
-                devmode.Orientation = win32con.DMORIENT_LANDSCAPE
-                devmode.Fields |= win32con.DM_ORIENTATION
-        finally:
-            win32print.ClosePrinter(printer_handle)
+            raise RuntimeError('Varsayılan Windows yazıcısı bulunamadı.')
 
         dc = win32ui.CreateDC()
+        dc_created = False
         doc_started = False
+        page_started = False
+        submitted = False
         try:
-            # Yazıcı sürücüsüne A4 yatay isteğini ve seçilen çıktı yönünü ilet.
-            if devmode is not None:
-                dc.CreateDC('WINSPOOL', printer_name, None, devmode)
-            else:
-                dc.CreatePrinterDC(printer_name)
+            # PyCDC.CreateDC diye bir metot YOKTUR. Doğru pywin32 çağrısı:
+            dc.CreatePrinterDC(printer_name)
+            dc_created = True
             printable_w = dc.GetDeviceCaps(win32con.HORZRES)
             printable_h = dc.GetDeviceCaps(win32con.VERTRES)
             if printable_w <= 0 or printable_h <= 0:
-                raise RuntimeError('Varsayılan yazıcının baskı ölçüleri alınamadı.')
-            # Yazıcıdaki donanımsal marjlar HORZRES/VERTRES ile korunur.
+                raise RuntimeError('Yazıcının kullanılabilir baskı ölçüleri alınamadı.')
+
             with fitz.open(path) as pdf:
+                if not len(pdf):
+                    raise ValueError('Yazdırılacak PDF sayfası bulunamadı.')
                 dc.StartDoc('ÇKS Askı Listesi')
                 doc_started = True
                 for page in pdf:
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), colorspace=fitz.csRGB, alpha=False)
+                    # Her sayfayı ayrı işleyerek büyük PDF'lerde belleği koru.
+                    # Baskı alanına sığdır, donanımsal kenar boşluklarını aşma.
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2),
+                                          colorspace=fitz.csRGB, alpha=False)
                     page_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
                     del pix
-                    scale = min(printable_w / page_image.width, printable_h / page_image.height)
+                    # Yazıcı portre modunda ise PDF yatay sayfayı döndürerek
+                    # baskı alanına daha iyi yerleştir; yazıcı ayarını değiştirme.
+                    if printable_h > printable_w and page_image.width > page_image.height:
+                        page_image = page_image.transpose(Image.Transpose.ROTATE_90)
+                    scale = min(printable_w / page_image.width,
+                                printable_h / page_image.height)
                     width = max(1, int(page_image.width * scale))
                     height = max(1, int(page_image.height * scale))
                     x = (printable_w - width) // 2
                     y = (printable_h - height) // 2
                     dc.StartPage()
-                    try:
-                        ImageWin.Dib(page_image).draw(dc.GetHandleOutput(), (x, y, x + width, y + height))
-                    finally:
-                        dc.EndPage()
+                    page_started = True
+                    ImageWin.Dib(page_image).draw(dc.GetHandleOutput(),
+                                                 (x, y, x + width, y + height))
+                    dc.EndPage()
+                    page_started = False
                 dc.EndDoc()
                 doc_started = False
+                submitted = True
             return printer_name
         except Exception:
             if doc_started:
                 try:
                     dc.AbortDoc()
                 except Exception:
-                    pass
+                    logging.exception('Yazdırma işi iptal edilirken hata oluştu')
             raise
         finally:
-            # Bazi Windows yazici suruculeri, EndDoc sonrasinda GDI aygit
-            # baglamini zaten serbest birakir. Bu durumda pywin32 DeleteDC
-            # WinError 6 veya 'DeleteDC failed' verebilir. Belge EndDoc ile
-            # yazici kuyruguna teslim edildiyse temizleme hatasi baski hatasi
-            # olarak raporlanmamalidir. Asil StartDoc/StartPage/EndDoc
-            # hatalari yukaridaki except ile kullaniciya iletilir.
-            try:
-                dc.DeleteDC()
-            except Exception as cleanup_exc:
-                import logging
-                logging.warning('Yazici GDI temizleme uyarisi (DeleteDC): %s', cleanup_exc)
+            if dc_created:
+                try:
+                    dc.DeleteDC()
+                except Exception as exc:
+                    # Başarılı EndDoc sonrasında sürücü temizleme hatası
+                    # yazdırmanın başarısız olduğu anlamına gelmez.
+                    logging.warning('Yazıcı DC temizleme uyarısı: %s', exc)
 
     def direct_print(self):
         """PDF işleyicisine gerek kalmadan Windows yazıcısına doğrudan yazdır."""
